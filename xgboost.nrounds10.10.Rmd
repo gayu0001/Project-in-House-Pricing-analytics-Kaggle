@@ -1,0 +1,109 @@
+---
+title: "XGBoost"
+output: html_notebook
+---
+
+```{r}
+#load necessary libraries
+library(xgboost)
+library(caret)
+```
+
+```{r}
+train=readRDS("train.rds")
+test=readRDS("test.rds")
+print(train)
+print(test)
+
+#train:test -> 80%:20%
+train_train=train[1:(0.8*dim(train)[1]),]
+test_train=train[(0.8*dim(train)[1]+1):(dim(train)[1]),]
+```
+
+Use caret to find the best hyperparameters using 5-fold cv
+```{r}
+#set up grid to choose the best values for the following parameters
+
+control <-trainControl(method="cv", number=5)
+
+xgb_grid = expand.grid(
+nrounds = 10,
+eta = c(0.1, 0.05, 0.01),
+max_depth = c(2, 3, 4, 5, 6),
+gamma = 0,
+colsample_bytree=1,
+min_child_weight=c(1, 2, 3, 4 ,5),
+subsample=1)
+
+xgb_caret <- train(x=train_train[-230], y=train_train[,230], method='xgbTree', trControl= control, tuneGrid=xgb_grid) 
+xgb_caret$bestTune
+
+```
+#From the run, the best tune parameters are max depth = 2, eta = 0.1 and min_child_weight =  1
+
+```{r}
+train_labels <- train_train[,230]
+
+# put our testing & training data into two seperates Dmatrixs objects
+dtrain <- xgb.DMatrix(data = as.matrix(train_train[,-230]), label= train_labels)
+dtest <- xgb.DMatrix(data = as.matrix(test_train[,-230]))
+```
+
+```{r}
+#Using the best parameters from the tune
+parameters <-list(
+        objective = "reg:linear",
+        booster = "gbtree",
+        eta=0.1, #default = 0.3
+        gamma=0,
+        max_depth=2, #default=6
+        min_child_weight=1, #default=1
+        subsample=1,
+        colsample_bytree=1
+)
+```
+
+```{r}
+#cross validation using the inbuild xgb.cv() to find the best no of rounds. 
+set.seed(123)
+xgbcv <- xgb.cv( params = parameters, data = dtrain, nrounds = 10, nfold = 5, showsd = T, stratified = T, print_every_n = 40, early_stopping_rounds = 10, maximize = F)
+```
+
+```{r}
+#based on the best tune parameters and nrounds = 1032
+xgb_mod <- xgb.train(data = dtrain, params= parameters, nrounds = 1032)
+
+```
+
+```{r}
+XGBpred <- predict(xgb_mod, dtest)
+head(XGBpred)
+
+predictions_XGB <-XGBpred #need to reverse the log to the real values
+
+```
+
+```{r}
+#evaluation of results
+cor(predictions_XGB,test_train[,230])
+rmse(test_train[,230],predictions_XGB)
+```
+
+```{r}
+#visualizing the results
+plot(exp(predictions_XGB),exp(test_train[,230]),xlab="Predicted Label",ylab="Actual Label",main="Plot of Actual Against Predicted Labels")
+lin.mod=lm(exp(test_train[,230])~exp(predictions_XGB))
+pr.lm=predict(lin.mod)
+lines(pr.lm~exp(predictions_XGB), col="blue", lwd=0.5)
+lines(c(0,450000), c(0,450000))
+
+legend("topleft", legend=c("fitted line", "45 degree line"),col=c("blue", "black"), lty=1, cex=0.8)
+```
+
+```{r, out.width="100%"}
+#view variable importance plot
+#install.packages("Ckmeans.1d.dp")
+library(Ckmeans.1d.dp) #required for ggplot clustering
+mat <- xgb.importance (feature_names = colnames(train_train[,-230]),model = xgb_mod)
+xgb.ggplot.importance(importance_matrix = mat[1:20], rel_to_first = TRUE)
+```

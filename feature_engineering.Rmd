@@ -1,0 +1,187 @@
+---
+title: "Feature Engineering"
+output: html_notebook
+---
+
+```{r}
+library(knitr)
+library(ggplot2)
+library(plyr)
+library(dplyr)
+library(corrplot)
+library(caret)
+library(gridExtra)
+library(scales)
+library(Rmisc)
+library(ggrepel)
+library(randomForest)
+library(psych)
+library(xgboost)
+```
+
+```{r}
+#read in all.rds(output from data preparaion.Rmd)
+all=readRDS("all_DP.rds")
+str(all)
+```
+
+```{r}
+#training data 1:1460
+#test data 1461:2919
+str(all)
+```
+
+```{r}
+#check read in data. Should have 56 numeric variables and 23 categoric variables
+numeric_variables=sapply(all,is.numeric)
+categorical_variables=sapply(all,is.factor)
+sprintf('There are %s numeric variables and %s categoric variables', sum(numeric_variables), sum(categorical_variables))
+```
+
+                              ################################## 1. Total Number of Bathrooms ########################################
+
+```{r}
+#there are four variables related to the number of bathrooms within the house.
+#above grade refers to ground level and above, excluding basement.
+head(all[,c("BsmtFullBath", "BsmtHalfBath","FullBath","HalfBath")])
+
+#feature a variable which combines these four variables.
+#multiply half value (0.5) to half bathrooms and full value (1.0) to full bathrooms
+all$Total_Bathrooms=all$BsmtFullBath+0.5*all$BsmtHalfBath+all$FullBath+0.5*all$HalfBath
+head(all[c("BsmtFullBath", "BsmtHalfBath","FullBath","HalfBath","Total_Bathrooms")])
+
+#check whether this new feature has been added
+head(all)
+```
+
+```{r}
+#visualize how this new feature(Total_Bathrooms vary with SalePrice)
+plot(all$Total_Bathrooms,all$SalePrice, xlab="Total_Bathrooms", ylab="SalePrice", main="SalePrice against Total_Bathrooms")
+tmp=cor(all[1:1460,"Total_Bathrooms"],all[1:1460,"SalePrice"])
+sprintf("the correlation between SalePrice and Total_Bathrooms: %s", tmp)
+```
+                              
+                              ################################## 2. Age of the House ########################################
+                              
+```{r}
+#age of the house is determinedby subtracting the year it was sold with the year it was remodeled. Previously, the YearRemodAdd column has been adjusted such that those with NA are replaced with the year it was built.
+all$Age=as.numeric(all$YrSold-all$YearRemodAdd)
+#check whether new feature is added
+head(all)
+```
+
+```{r}
+#the relationship between age of the house and SalePrice
+plot(all$Age,all$SalePrice)
+
+tmp=cor(all[1:1460,"Age"],all[1:1460,"SalePrice"])
+sprintf("the correlation between SalePrice and Age: %s", tmp)
+
+#negative correlation (-0.5) was found. It makes sense as the older the house, the lesser it is going to worth.
+```
+    
+```{r}
+#convert to factor
+all$YrSold=as.factor(all$YrSold)
+```
+    
+                    
+                          ##################################### 3. Has the house been remodeled? ####################################  
+
+```{r}
+#creating a new feature that indicates that whether the house has been remodeled
+all[all$YearBuilt==all$YearRemodAdd, "Remodeled"] = 0
+all[all$YearBuilt!=all$YearRemodAdd, "Remodeled"] = 1
+
+#check whether new feaure is added
+head(all)
+```
+
+```{r}
+#determine the relationship between the "remodeled" feature and the salesprice
+sprintf("SalePrice against Remodelling")
+tapply(all$SalePrice[1:1460],all$Remodeled[1:1460],mean)
+
+#the distribution of the data for the new feature
+sprintf("Distrbution of the data for the new feature")
+table(all$Remodeled[1:1460])
+```
+
+                           ######################################### 4. Is the house new? ############################################
+                                           
+```{r}
+#we claim that if the house is new if the year it was sold and built are the same
+all[all$YearBuilt==all$YrSold,"New"]=1
+all[all$YearBuilt!=all$YrSold,"New"]=0
+#check if the new feature is added
+head(all)
+
+#determine the relationship between the "New" feature and the salesprice
+sprintf("SalePrice against New")
+tapply(all$SalePrice[1:1460],all$New[1:1460],mean)
+#the distribution of the data for the new feature
+sprintf("Distrbution of the data for the new feature")
+table(all$New[1:1460])
+
+#New houses are priced higher according to the results below and this is logically sound.
+```
+                                           
+                      ################################ 5. Houses in different neighborhood are priced differently ##################################
+                      
+```{r}
+#find the mean of the price of the houses in each neigborhood
+sort(tapply(all$SalePrice[1:1460],all$Neighborhood[1:1460],mean), decreasing=TRUE)
+table(all$Neighborhood)
+
+#create 5 categories out of it
+all[all$Neighborhood=="NoRidge"|all$Neighborhood=="NridgHt"|all$Neighborhood=="StoneBr"|all$Neighborhood=="Timber"|all$Neighborhood=="Veenker", "Neighborhood_Category"]=4
+all[all$Neighborhood=="Somerst"|all$Neighborhood=="ClearCr"|all$Neighborhood=="Crawfor"|all$Neighborhood=="CollgCr"|all$Neighborhood=="Blmngtn", "Neighborhood_Category"]=3
+all[all$Neighborhood=="Gilbert"|all$Neighborhood=="NWAmes"|all$Neighborhood=="SawyerW"|all$Neighborhood=="Mitchel"|all$Neighborhood=="NAmes", "Neighborhood_Category"]=2
+all[all$Neighborhood=="NPkVill"|all$Neighborhood=="SWISU"|all$Neighborhood=="Blueste"|all$Neighborhood=="Sawyer"|all$Neighborhood=="OldTown", "Neighborhood_Category"]=1
+all[all$Neighborhood=="Edwards"|all$Neighborhood=="BrkSide"|all$Neighborhood=="BrDale"|all$Neighborhood=="IDOTRR"|all$Neighborhood=="MeadowV", "Neighborhood_Category"]=0
+
+#check whether the new feature
+all["Neighborhood_Category"]
+```
+                      
+                    ############################################### 6. Living Area ######################################################
+                    
+                    
+                    GrLivArea: Above grade (ground) living area square feet
+                    
+                    TotalBsmtSF: Total square feet of basement area
+                    
+```{r}
+#total area within the house
+all$Total_Living_Area = all$GrLivArea + all$TotalBsmtSF
+#check whether new feature has been added
+head(all)
+```
+
+```{r}
+#check the relationship between Total_Living_Area and SalePrice
+plot(all$Total_Living_Area,all$SalePrice)
+cor(all$Total_Living_Area[1:1460],all$SalePrice[1:1460])
+
+#high correlation (0.779) was found between the SalePrice and the Total Living Area
+```
+           
+```{r}
+numeric_variables=sapply(all,is.numeric)
+categorical_variables=sapply(all,is.factor)
+sprintf('There are %s numeric variables and %s categoric variables', sum(numeric_variables), sum(categorical_variables))
+```
+
+```{r}
+str(all)
+```
+           
+                    
+```{r}
+#save dataframe with its formatting.
+saveRDS(all,file="all_DP_FE.rds")
+```
+                      
+                             
+                             
+                                           

@@ -1,0 +1,171 @@
+---
+title: "Advanced regression method on Price Data"
+output: html_notebook
+---
+First, Installing all the packagesrequired 
+```{r}
+# get the require R packages
+# install.packages("ggplot2")
+# install.packages("plyr")
+# install.packages("dplyr")
+# install.packages("caret")
+# install.packages("moments")
+# install.packages("glmnet")
+# install.packages("elasticnet")
+# install.packages("knitr")
+# install.packages("Metrics")
+```
+Loaded the packages installed through R 
+```{r}
+# get the require R packages
+library(ggplot2)
+library(plyr)
+library(dplyr)
+library(caret)
+library(moments)
+library(glmnet)
+library(elasticnet)
+library(knitr)
+library(Metrics)
+```
+```{r}
+#read in all.rds(output from pre-processing.Rmd)
+train=readRDS("train.rds")
+test=readRDS("test.rds")
+print(train)
+print(test)
+```
+
+```{r}
+#train:test -> 80%:20%
+train_train=train[1:(0.8*dim(train)[1]),]
+test_train=train[(0.8*dim(train)[1]+1):(dim(train)[1]),]
+print(train_train)
+print(test_train)
+```
+
+Divide out the train and test dataset according to our initial proportion
+```{r}
+# create data for training and test
+X_train <- train_train[,-230]
+X_test <- test_train[,-230]
+y <- train_train[,230]
+```
+
+Now, model of regression is being set up.
+```{r}
+#MODEL
+# set up caret model training parameters
+# model specific training parameter
+CARET.TRAIN.CTRL <- trainControl(method="repeatedcv",
+                                 number=5,
+                                 repeats=5,
+                                 verboseIter=FALSE)
+```
+ Tesing it in few model
+ 1) Ridge Regression (suitable for multicollinearity variable/ each variable have high interaction)
+ 
+```{r}
+# test out Ridge regression model
+lambdas <- seq(1,0,-0.001)
+
+# train model
+set.seed(123)  # for reproducibility
+model_ridge <- train(x=X_train,y=y,
+                     method="glmnet",
+                     metric="RMSE",
+                     maximize=FALSE,
+                     trControl=CARET.TRAIN.CTRL,
+                     tuneGrid=expand.grid(alpha=0, # Ridge regression
+                                          lambda=lambdas))
+```
+Now we calculated RMSE to test on How accurate is Ridge regression with varying value of K or lambda
+ 
+```{r}
+#RMSE-Root Mean Square Error
+ggplot(data=filter(model_ridge$result,RMSE<0.14)) +
+  geom_line(aes(x=lambda,y=RMSE))
+
+mean(model_ridge$resample$RMSE)
+```
+2) Used Lasso regression method
+```{r}
+# test out Lasso regression model
+
+# train model
+set.seed(123)  # for reproducibility
+model_lasso <- train(x=X_train,y=y,
+                     method="glmnet",
+                     metric="RMSE",
+                     maximize=FALSE,
+                     trControl=CARET.TRAIN.CTRL,
+                     tuneGrid=expand.grid(alpha=1,  # Lasso regression
+                                          lambda=c(1,0.1,0.05,0.01,seq(0.009,0.001,-0.001),
+                                                   0.00075,0.0005,0.0001)))
+model_lasso
+
+mean(model_lasso$resample$RMSE)
+
+```
+From previous prediction, lambda 0.004 give best Rsquare score which explain almost 90% of the variables
+We used this to build up our final model
+```{r}
+# extract coefficients for the best performing model
+coef <- data.frame(coef.name = dimnames(coef(model_lasso$finalModel,s=model_lasso$bestTune$lambda))[[1]], 
+                   coef.value = matrix(coef(model_lasso$finalModel,s=model_lasso$bestTune$lambda)))
+
+# exclude the (Intercept) term
+coef <- coef[-1,]
+
+# print summary of model results
+picked_features <- nrow(filter(coef,coef.value!=0))
+not_picked_features <- nrow(filter(coef,coef.value==0))
+
+cat("Lasso picked",picked_features,"variables and eliminated the other",
+    not_picked_features,"variables\n")
+
+```
+Plotting all coefficient relationship with the price variable, applying the model on data 
+```{r}
+# sort coefficients in ascending order
+coef <- arrange(coef,-coef.value)
+
+# extract the top 10 and bottom 10 features
+imp_coef <- rbind(head(coef,10),
+                  tail(coef,10))
+
+ggplot(imp_coef) +
+  geom_bar(aes(x=reorder(coef.name,coef.value),y=coef.value),
+           stat="identity") +
+  ylim(-1.5,0.6) +
+  coord_flip() +
+  ggtitle("Coefficents in the Lasso Model") +
+  theme(axis.title=element_blank())
+```
+Created new CSV file and bind with sales price column result of lasso method.
+```{r}
+# make create submission file
+preds <- predict(model_lasso,newdata=X_test)
+
+# construct data frame for solution
+solution <- data.frame(Id=as.integer(rownames(X_test)),SalePrice=preds)
+write.csv(solution,"ridge_sol.csv",row.names=FALSE)
+```
+
+```{r}
+#evaluation of results
+cor(preds,test_train[,230])
+rmse(test_train[,230],preds)
+```
+
+```{r}
+#visualizing the results
+plot(exp(preds),exp(test_train[,230]),xlab="Predicted Label",ylab="Actual Label",main="Plot of Actual Against Predicted Labels")
+lin.mod=lm(exp(test_train[,230])~exp(preds))
+pr.lm=predict(lin.mod)
+lines(pr.lm~exp(preds), col="blue", lwd=0.5)
+lines(c(0,450000), c(0,450000))
+
+legend("topleft", legend=c("fitted line", "45 degree line"),col=c("blue", "black"), lty=1, cex=0.8)
+```
+

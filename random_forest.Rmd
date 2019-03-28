@@ -1,0 +1,76 @@
+---
+title: "random forest"
+output: html_notebook
+---
+
+```{r}
+library(randomForest)
+library(Metrics)
+library(knitr)
+library(ggplot2)
+library(plyr)
+library(dplyr)
+library(corrplot)
+library(caret)
+library(gridExtra)
+library(scales)
+library(Rmisc)
+library(ggrepel)
+library(randomForest)
+library(psych)
+library(xgboost)
+```
+
+```{r}
+#read in all.rds(output from pre-processing.Rmd)
+train=readRDS("train.rds")
+test=readRDS("test.rds")
+print(train)
+print(test)
+```
+
+```{r}
+#train:test -> 80%:20%
+train_train=train[1:(0.8*dim(train)[1]),]
+test_train=train[(0.8*dim(train)[1]+1):(dim(train)[1]),]
+print(train_train)
+print(test_train)
+```
+
+
+```{r}
+set.seed(2018)
+model=randomForest(x=train_train[,-230], y=train_train[,230], ntree=1000,importance=TRUE)
+predictions=predict(model,test_train[,-230])
+```
+
+```{r}
+model
+```
+
+```{r}
+#evaluation of results
+cor(predictions,test_train[,230])
+rmse(test_train[,230],predictions)
+```
+
+```{r}
+#visualizing the results
+plot(exp(predictions),exp(test_train[,230]),xlab="Predicted Label",ylab="Actual Label",main="Plot of Actual Against Predicted Labels")
+lin.mod=lm(exp(test_train[,230])~exp(predictions))
+pr.lm=predict(lin.mod)
+lines(pr.lm~exp(predictions), col="blue", lwd=0.5)
+lines(c(0,450000), c(0,450000))
+
+legend("topleft", legend=c("fitted line", "45 degree line"),col=c("blue", "black"), lty=1, cex=0.8)
+```
+
+```{r}
+#display importance chart
+set.seed(2018)
+imp_RF=importance(model)
+imp_DF=data.frame(Variables = row.names(imp_RF), MSE = imp_RF[,1])
+imp_DF=imp_DF[order(imp_DF$MSE, decreasing = TRUE),]
+
+ggplot(imp_DF[1:20,], aes(x=reorder(Variables, MSE), y=MSE, fill=MSE)) + geom_bar(stat = 'identity') + labs(x = 'Variables', y= '% increase MSE if variable is randomly permuted') + coord_flip() + theme(legend.position="none")
+```

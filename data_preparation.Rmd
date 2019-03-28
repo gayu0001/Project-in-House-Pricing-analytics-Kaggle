@@ -1,0 +1,1117 @@
+---
+title: "Data_Preparation"
+output: html_notebook
+---
+
+```{r}
+library(ggplot2)
+library(plyr)
+library(dplyr)
+library(corrplot)
+library(caret)
+library(gridExtra)
+library(scales)
+library(Rmisc)
+library(ggrepel)
+library(psych)
+```
+
+
+                      ################################# Reading in data and combining training and test data ########################################
+
+
+```{r}
+#read files
+train=read.csv("./inputs/train.csv", stringsAsFactors=FALSE)
+test=read.csv("./inputs/test.csv", stringsAsFactors=FALSE)
+
+#check read in files
+print(train)
+print(test)
+```
+
+```{r}
+#remove id from both train and test variables
+train=train[,-1]
+print(train)
+test=test[,-1]
+print(test)
+```
+
+```{r}
+#combine train and test sets for analysis and cleaning
+#test set has missing saleprice (uneqal dimension for merging with train set)
+#make a copy of the test set before adding the extra column
+test_tmp=test
+test_tmp$SalePrice= NA
+print(test_tmp)
+
+#combine the added-column test set with the train set
+all=rbind(train,test_tmp)
+print(all)
+```
+```{r}
+#finding the number of numeric codes
+numericVars=which(sapply(all, is.numeric))
+numericVarNames=names(numericVars)
+sprintf("There are %s numeric variables", length(numericVars))
+```
+
+
+
+                    ######################################### Tabulate the number of missing values ####################################################
+
+
+```{r}
+#tabulate the number of missing values
+miss_freq=sort(colSums(is.na(all)),decreasing=TRUE)
+print(miss_freq)
+sprintf("There are %s columns of missing values", sum(miss_freq>0))
+```
+
+
+                ######################################### To fix all 34 variables with missing values ################################################
+
+
+1. PoolQC: Pool quality
+		
+       Ex	Excellent
+       Gd	Good
+       TA	Average/Typical
+       Fa	Fair
+       NA	No Pool
+
+```{r}
+#replace missing values in PoolQC
+#According to the data description, PoolQC has Excellent, Good, Average, Fair and No Pool levels. NA represents No Pool.
+all$PoolQC[is.na(all$PoolQC)]='No Pool'
+#convert the variable to ordinal class
+values=c("No Pool"=0,"Po"=1,"Fa"=2,"TA"=3,"Gd"=4,"Ex"=5)
+all$PoolQC=as.integer(revalue(all$PoolQC,values))
+class(all$PoolQC)
+```
+
+```{r}
+#assessing PoolQC with PoolArea
+all[all$PoolQC==0 & all$PoolArea>0, c("PoolQC","PoolArea","OverallQual")]
+```
+
+```{r}
+#this indicates some error in filling up of the missing values. '0' indicates no pool yet another variable showing its pool area.
+#here we assume pools exist for these houses but without quality ratings.
+#we will replace these values with reference to "OverallQual" variable
+#there are 10 ordinal categories in "OverallQual" and we resampled it into 5 categories to match with PoolQC range.
+
+all[2421,"PoolQC"]=2
+all[2504,"PoolQC"]=3
+all[2600,"PoolQC"]=2
+```
+
+2. MiscFeature: Miscellaneous feature not covered in other categories
+		
+       Elev	Elevator
+       Gar2	2nd Garage (if not described in garage section)
+       Othr	Other
+       Shed	Shed (over 100 SF)
+       TenC	Tennis Court
+       NA	None
+
+```{r}
+#Replace missing values in MiscFeature
+#MiscFeature account for the additional facilities that a house might possess, such as elevator, 2nd Gararge, Shed, Tennis Court and Others.
+#The NAs are due to the house having no other additional facilities
+#replacing 'NA' with 'None' and this feature should bein factor form.
+all$MiscFeature[is.na(all$MiscFeature)]='None'
+#convert the variable to factor class
+all$MiscFeature=as.factor(all$MiscFeature)
+class(all$MiscFeature)
+```
+
+3. Alley: Type of alley access to property
+
+       Grvl	Gravel
+       Pave	Paved
+       NA 	No alley access
+
+```{r}
+#NA represent no alley access
+all$Alley[is.na(all$Alley)]='No alley access'
+#convert the variable to factor class
+all$Alley=as.factor(all$Alley)
+class(all$Alley)
+```
+
+4. Fence: Fence quality
+		
+       GdPrv	Good Privacy
+       MnPrv	Minimum Privacy
+       GdWo	Good Wood
+       MnWw	Minimum Wood/Wire
+       NA	No Fence
+
+```{r}
+#NA represents No Fence
+all$Fence[is.na(all$Fence)]='No Fence'
+#converting this to factor class
+all$Fence=as.factor(all$Fence)
+class(all$Fence)
+```
+
+5. FireplaceQu: Fireplace quality
+
+       Ex	Excellent - Exceptional Masonry Fireplace
+       Gd	Good - Masonry Fireplace in main level
+       TA	Average - Prefabricated Fireplace in main living area or Masonry Fireplace in basement
+       Fa	Fair - Prefabricated Fireplace in basement
+       Po	Poor - Ben Franklin Stove
+       NA	No Fireplace
+       
+```{r}
+#replace NA with no Fireplace
+all$FireplaceQu[is.na(all$FireplaceQu)]="No Fireplace"
+
+#another variable that is closely related to FireplaceQu is Fireplaces
+#and let's check whether the number of houses with no fireplace in "Fireplaces" equates with the count in "FireplaceQu"
+sprintf("The number of No Fireplace in variables FireplaceQu and Fireplaces are equal: %s",sum(all$FireplaceQu=="No Fireplace") == sum(all$Fireplaces==0))
+
+#convert the variable to ordinal class
+values=c("No Fireplace"=0,"Po"=1,"Fa"=2,"TA"=3,"Gd"=4,"Ex"=5)
+all$FireplaceQu=as.integer(revalue(all$FireplaceQu,values))
+class(all$FireplaceQu)
+```
+
+6. LotFrontage: Linear feet of street connected to property
+
+   Neighborhood: Physical locations within Ames city limits
+
+       Blmngtn	Bloomington Heights
+       Blueste	Bluestem
+       BrDale	Briardale
+       BrkSide	Brookside
+       ClearCr	Clear Creek
+       CollgCr	College Creek
+       Crawfor	Crawford
+       Edwards	Edwards
+       Gilbert	Gilbert
+       IDOTRR	Iowa DOT and Rail Road
+       MeadowV	Meadow Village
+       Mitchel	Mitchell
+       Names	North Ames
+       NoRidge	Northridge
+       NPkVill	Northpark Villa
+       NridgHt	Northridge Heights
+       NWAmes	Northwest Ames
+       OldTown	Old Town
+       SWISU	South & West of Iowa State University
+       Sawyer	Sawyer
+       SawyerW	Sawyer West
+       Somerst	Somerset
+       StoneBr	Stone Brook
+       Timber	Timberland
+       Veenker	Veenker
+
+```{r}
+#get the index for the rows with missing values
+Lot_NAs=all[is.na(all$LotFrontage),c("Neighborhood","LotFrontage")]
+print(Lot_NAs)
+idx=as.numeric(rownames(Lot_NAs))
+print(class(idx))
+print(length(idx))
+
+# #we will use the mean distance of each "Neighbourhood" to replace the missing values in "LotFrontage"
+for (i in idx){
+      if(is.na(all$LotFrontage[i])){
+              all[i,"LotFrontage"]=as.integer(mean(all$LotFrontage[all$Neighborhood==all[i,"Neighborhood"]], na.rm=TRUE))
+        }
+}
+print(all[c(8,13,15,17),"LotFrontage"])
+print(class(all$LotFrontage))
+```
+
+7. GarageYrBlt: Year garage was built
+
+```{r}
+#associate houses with missing values in this column as houses that did not rebuild or remodel its garage.
+#replace this missing values with the year the house is built.
+all[is.na(all$GarageYrBlt),"GarageYrBlt"]=all$YearBuilt[is.na(all$GarageYrBlt)]
+class(all$GarageYrBlt)
+
+#check whether the values have been replaced
+sum(is.na(all$GarageYrBlt))
+```
+Putting all variables related to garage together:
+
+Number of missing values in garag-related components:
+
+GarageFinish: Interior finish of the garage = 159
+GarageQual: Garage quality = 159
+GarageCond: Garage condition = 159
+GarageType: Garage location = 157
+GarageCars: Size of garage in car capacity = 1
+GarageArea: Size of garage in square feet = 1
+
+
+```{r}
+#GarageFinish, GarageQual, GarageCond, GarageType, GarageCars and GarageArea seems to be inter-related.
+tmp=all[is.na(all$GarageFinish) & is.na(all$GarageQual) & is.na(all$GarageCond) & is.na(all$GarageType),]
+sprintf("how many of these rows have NA values in GarageFinish, Qual, Cond, and Type: %s", dim(tmp)[1])
+```
+
+```{r}
+#the above result indicates the the 157 missing values found in GarageType is also found in GarageFinish, Quala and Cond
+#
+all[is.na(all$GarageFinish) & is.na(all$GarageQual) & is.na(all$GarageCond) & !is.na(all$GarageType), c("GarageFinish","GarageQual","GarageCond","GarageType","GarageCars","GarageArea")]
+
+#all[is.na(all$GarageCars) | is.na(all$GarageArea), c("GarageFinish","GarageQual","GarageCond","GarageType","GarageCars","GarageArea")]
+```
+
+8. GarageCars: Size of garage in car capacity 
+9. GarageArea: Size of garage in square feet 
+
+```{r}
+# the record 2127 seems to have a garage as it has value for GarageCars and GarageArea
+# on the other hand, 2577 does not seem to have a garage
+# lets fix these two entries first
+
+# function: finding mode
+getmode <- function(v) {
+   uniqv <- unique(v)
+   uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+
+# entry 2127
+all[2127,"GarageFinish"]=getmode(all$GarageFinish)
+all[2127,"GarageQual"]=getmode(all$GarageQual)
+all[2127,"GarageCond"]=getmode(all$GarageCond)
+
+# entry 2577
+all[2577,"GarageType"]=NA
+all[2577,"GarageCars"]=0
+all[2577,"GarageArea"]=0
+
+#check the rectification
+print(all[c(2127,2577),c("GarageFinish","GarageQual","GarageCond","GarageType","GarageCars","GarageArea")])
+```
+```{r}
+tmp=all[is.na(all$GarageFinish) & is.na(all$GarageQual) & is.na(all$GarageCond) & is.na(all$GarageType),]
+sprintf("how many of these rows have NA values in GarageFinish, Qual, Cond, and Type (after replacement): %s", dim(tmp)[1])
+```
+10. GarageFinish: Interior finish of the garage
+
+       Fin	Finished
+       RFn	Rough Finished	
+       Unf	Unfinished
+       NA	No Garage
+
+```{r}
+#the NAs indicate "No Garage"
+#replace NAs with "No Garage"
+all[is.na(all$GarageFinish),"GarageFinish"]="No Garage"
+
+#check the number of NAs again
+sum(is.na(all$GarageFinish))
+
+# convert this variable to ordinal
+values=c('No Garage'=0, 'Unf'=1, 'RFn'=2, 'Fin'=3)
+all$GarageFinish=as.integer(revalue(all$GarageFinish, values))
+class(all$GarageFinish)
+```
+11. GarageQual: Garage quality
+
+       Ex	Excellent
+       Gd	Good
+       TA	Typical/Average
+       Fa	Fair
+       Po	Poor
+       NA	No Garage
+
+```{r}
+#the NAs indicate "No Garage"
+#replace NAs with "No Garage"
+all[is.na(all$GarageQual),"GarageQual"]="No Garage"
+
+#check the number of NAs again
+sum(is.na(all$GarageQual))
+
+#convert to ordinal
+values=c("No Garage"=0,"Po"=1,"Fa"=2,"TA"=3,"Gd"=4,"Ex"=5)
+all$GarageQual=as.integer(revalue(all$GarageQual, values))
+class(all$GarageQual)
+```
+12. GarageCond: Garage condition
+
+       Ex	Excellent
+       Gd	Good
+       TA	Typical/Average
+       Fa	Fair
+       Po	Poor
+       NA	No Garage
+
+```{r}
+#the NAs indicate "No Garage"
+#replace NAs with "No Garage"
+all[is.na(all$GarageCond),"GarageCond"]="No Garage"
+
+#convert to ordinal
+values=c("No Garage"=0,"Po"=1,"Fa"=2,"TA"=3,"Gd"=4,"Ex"=5)
+all$GarageCond=as.integer(revalue(all$GarageCond, values))
+class(all$GarageCond)
+```
+13. GarageType: Garage location
+		
+       2Types	More than one type of garage
+       Attchd	Attached to home
+       Basment	Basement Garage
+       BuiltIn	Built-In (Garage part of house - typically has room above garage)
+       CarPort	Car Port
+       Detchd	Detached from home
+       NA	No Garage
+
+```{r}
+#the NAs indicate "No Garage"
+#replace NAs with "No Garage"
+all[is.na(all$GarageType),"GarageType"]="No Garage"
+
+#convert to factor class
+all$GarageType=as.factor(all$GarageType)
+class(all$GarageType)
+```
+
+Putting all variables related to basement together:
+
+No. of missing values in each variable:
+
+BsmtCond: Evaluates the general condition of the basement = 82
+BsmtExposure: Refers to walkout or garden level walls = 82  
+BsmtQual: Evaluates the height of the basement = 81
+BsmtFinType2: Rating of basement finished area = 80
+BsmtFinType1: Rating of basement finished area = 79
+BsmtFullBath: Basement full bathrooms = 2
+BsmtHalfBath: Basement half bathrooms = 2
+BsmtFinSF1: Type 1 finished square feet = 1
+BsmtFinSF2: Type 2 finished square feet = 1
+BsmtUnfSF: Unfinished square feet of basement area = 1
+TotalBsmtSF: Total square feet of basement area = 1
+
+```{r}
+#check whether the 79 records with missing values in BsmtFinType1 correspond with those in BsmtCond, Exposure, Qual and FinType2
+tmp=all[is.na(all$BsmtFinType1) & is.na(all$BsmtCond) & is.na(all$BsmtExposure) & is.na(all$BsmtQual) & is.na(all$BsmtFinType2),]
+print(tmp)
+sprintf("There are %s rows with NAs in bsmtfintype1, bsmtcond, bsmtexposure, bsmtqual and bsmtfintype2 concurrently ",dim(tmp)[1])
+
+#finding the other records with NA in the basement variables.
+all[!is.na(all$BsmtFinType1) & (is.na(all$BsmtCond)|is.na(all$BsmtExposure)|is.na(all$BsmtQual)|is.na(all$BsmtFinType2)),c("BsmtFinType1","BsmtCond","BsmtExposure","BsmtQual","BsmtFinType2")]
+```
+
+```{r}
+#each row is observed to have a missing value out of five variables
+#we will replace these NAs with the mode.
+
+all[333,"BsmtFinType2"]=getmode(all$BsmtFinType2)
+all[949,"BsmtExposure"]=getmode(all$BsmtExposure)
+all[1488,"BsmtExposure"]=getmode(all$BsmtExposure)
+all[2041,"BsmtCond"]=getmode(all$BsmtCond)
+all[2186,"BsmtCond"]=getmode(all$BsmtCond)
+all[2218,"BsmtQual"]=getmode(all$BsmtQual)
+all[2219,"BsmtQual"]=getmode(all$BsmtQual)
+all[2349,"BsmtExposure"]=getmode(all$BsmtExposure)
+all[2525,"BsmtCond"]=getmode(all$BsmtCond)
+
+all[c(333,949,1488,2041,2186,2218,2219,2349,2525),c("BsmtFinType1","BsmtCond","BsmtExposure","BsmtQual","BsmtFinType2")]
+```
+14. BsmtCond: Evaluates the general condition of the basement
+
+       Ex	Excellent
+       Gd	Good
+       TA	Typical - slight dampness allowed
+       Fa	Fair - dampness or some cracking or settling
+       Po	Poor - Severe cracking, settling, or wetness
+       NA	No Basement
+
+```{r}
+#the NAs indicate "No Basement"
+#replace NAs with "No Basement"
+all[is.na(all$BsmtCond),"BsmtCond"]="No Basement"
+
+#convert to ordinal
+values=c("No Basement"=0,"Po"=1,"Fa"=2,"TA"=3,"Gd"=4,"Ex"=5)
+all$BsmtCond=as.integer(revalue(all$BsmtCond, values))
+class(all$BsmtCond)
+```
+15. BsmtExposure: Refers to walkout or garden level walls
+
+       Gd	Good Exposure
+       Av	Average Exposure (split levels or foyers typically score average or above)	
+       Mn	Mimimum Exposure
+       No	No Exposure
+       NA	No Basement
+```{r}
+#the NAs indicate "No Basement"
+#replace NAs with "No Basement"
+all[is.na(all$BsmtExposure),"BsmtExposure"]="No Basement"
+
+#convert to ordinal
+values=c("No Basement"=0,"No"=1,"Mn"=2,"Av"=3,"Gd"=4)
+all$BsmtExposure=as.integer(revalue(all$BsmtExposure, values))
+class(all$BsmtExposure)
+```
+16. BsmtQual: Evaluates the height of the basement
+
+       Ex	Excellent (100+ inches)	
+       Gd	Good (90-99 inches)
+       TA	Typical (80-89 inches)
+       Fa	Fair (70-79 inches)
+       Po	Poor (<70 inches
+       NA	No Basement
+       
+```{r}
+#the NAs indicate "No Basement"
+#replace NAs with "No Basement"
+all[is.na(all$BsmtQual),"BsmtQual"]="No Basement"
+
+#convert to ordinal
+values=c("No Basement"=0,"Po"=1,"Fa"=2,"TA"=3,"Gd"=4,"Ex"=5)
+all$BsmtQual=as.integer(revalue(all$BsmtQual, values))
+class(all$BsmtQual)
+```
+17. BsmtFinType2: Rating of basement finished area (if multiple types)
+
+       GLQ	Good Living Quarters
+       ALQ	Average Living Quarters
+       BLQ	Below Average Living Quarters	
+       Rec	Average Rec Room
+       LwQ	Low Quality
+       Unf	Unfinshed
+       NA	No Basement
+
+```{r}
+#the NAs indicate "No Basement"
+#replace NAs with "No Basement"
+all[is.na(all$BsmtFinType2),"BsmtFinType2"]="No Basement"
+
+#convert to ordinal
+values=c("No Basement"=0,"Unf"=1,"LwQ"=2,"Rec"=3,"BLQ"=4,"ALQ"=5,"GLQ"=6)
+all$BsmtFinType2=as.integer(revalue(all$BsmtFinType2, values))
+class(all$BsmtFinType2)
+```
+18. BsmtFinTyp1: Rating of basement finished area
+
+       GLQ	Good Living Quarters
+       ALQ	Average Living Quarters
+       BLQ	Below Average Living Quarters	
+       Rec	Average Rec Room
+       LwQ	Low Quality
+       Unf	Unfinshed
+       NA	No Basement
+       
+```{r}
+#the NAs indicate "No Basement"
+#replace NAs with "No Basement"
+all[is.na(all$BsmtFinType1),"BsmtFinType1"]="No Basement"
+
+#convert to ordinal
+values=c("No Basement"=0,"Unf"=1,"LwQ"=2,"Rec"=3,"BLQ"=4,"ALQ"=5,"GLQ"=6)
+all$BsmtFinType1=as.integer(revalue(all$BsmtFinType1, values))
+class(all$BsmtFinType1)
+```
+19. BsmtFullBath: Basement full bathrooms
+
+```{r}
+#replace NAs with zero
+all[is.na(all$BsmtFullBath),"BsmtFullBath"]=0
+hist(all$BsmtFullBath, main="Histogram of BsmtFullBath", xlab="number of full bathrooms in basement")
+```
+20. BsmtHalfBath: Basement half bathrooms
+
+```{r}
+#replace NAs with zero
+all[is.na(all$BsmtHalfBath),"BsmtHalfBath"]=0
+hist(all$BsmtHalfBath, main="Histogram of BsmtHalfBath", xlab="number of half bathrooms in basement")
+```
+
+21. BsmtFinSF1: Type 1 finished square feet
+22.BsmtFinSF2: Type 2 finished square feet
+23. BsmtUnfSF: Unfinished square feet of basement area
+24. TotalBsmtSF: Total square feet of basement area
+
+```{r}
+#replace NAs with zero
+#they are integers
+all[is.na(all$BsmtFinSF1),"BsmtFinSF1"]=0
+all[is.na(all$BsmtFinSF2),"BsmtFinSF2"]=0
+all[is.na(all$BsmtUnfSF),"BsmtUnfSF"]=0
+all[is.na(all$TotalBsmtSF),"TotalBsmtSF"]=0
+```
+
+Putting related variables, MasVnrType (24 missing values) and MasVnrArea(23 missing values), to assess.
+
+```{r}
+#the number of records with MasVnrType being NA given MasVnrArea is also NA.
+tmp=all[is.na(all$MasVnrType) & is.na(all$MasVnrArea),]
+sprintf("The number of records with with MasVnrType being NA given MasVnrArea is also NA: %s", dim(tmp)[1])
+
+#finding the extra NA record of MasVnrType
+all[is.na(all$MasVnrType) & !is.na(all$MasVnrArea), c("MasVnrType","MasVnrArea")]
+
+#correct entry 2611
+table(all$MasVnrType)
+#"BrkFace" has the highest mode after "None"
+all[2611,c("MasVnrType")]="BrkFace"
+print(all[2611,c("MasVnrType","MasVnrArea")])
+
+#replace NAs with None
+all[is.na(all$MasVnrType),"MasVnrType"]="None"
+```
+25. MasVnrType: Masonry veneer type 
+
+       BrkCmn	Brick Common
+       BrkFace	Brick Face
+       CBlock	Cinder Block
+       None	None
+       Stone	Stone
+
+```{r}
+#check the relationship between the different category in MasVnrType and SalePrice
+attach(all)
+aggregate(all[,c("MasVnrType","SalePrice")],by=list(MasVnrType),FUN=mean,na.rm=TRUE)
+#relationship seems to exist between "MasVnrType" and "SalePrice"
+#convert to ordinal
+values=c("BrkCmn"=0,"None"=1,"BrkFace"=2,"Stone"=3)
+all$MasVnrType=as.integer(revalue(all$MasVnrType, values))
+class(all$MasVnrType)
+```
+26. MasVnrArea: Masonry veneer area in square feet
+
+```{r}
+#replace NAs with zero
+all[is.na(all$MasVnrArea),"MasVnrArea"]=0
+```
+27. MSZoning: Identifies the general zoning classification of the sale.
+		
+       A	Agriculture
+       C	Commercial
+       FV	Floating Village Residential
+       I	Industrial
+       RH	Residential High Density
+       RL	Residential Low Density
+       RP	Residential Low Density Park 
+       RM	Residential Medium Density
+
+```{r}
+#input missing values with mode and convert to factor
+all[is.na(all$MSZoning),"MSZoning"]=getmode(all$MSZoning)
+all$MSZoning=as.factor(all$MSZoning)
+class(all$MSZoning)
+```
+28. KitchenQual: Kitchen quality
+
+       Ex	Excellent
+       Gd	Good
+       TA	Typical/Average
+       Fa	Fair
+       Po	Poor
+
+```{r}
+#replace missing values with the mode
+all[is.na(all$KitchenQual),"KitchenQual"]=getmode(all$KitchenQual)
+sprintf("number of missing values in KitchenQual(after replacement):%s", sum(is.na(all$KitchenQual)))
+#convert to ordinal
+values=c("Po"=0,"Fa"=1,"TA"=2,"Gd"=3,"Ex"=4)
+all$KitchenQual=as.integer(revalue(all$KitchenQual, values))
+class(all$KitchenQual)
+```
+29. Utilities: Type of utilities available
+		
+       AllPub	All public Utilities (E,G,W,& S)	
+       NoSewr	Electricity, Gas, and Water (Septic Tank)
+       NoSeWa	Electricity and Gas Only
+       ELO	Electricity only	
+
+```{r}
+#checking the frequency of each level
+table(all$Utilities)
+
+#the table shows that most of the rows are categorised as "AllPub"
+#this variable hence serve little value in predicting the response varaiable
+all$Utilities=NULL
+```
+30. Functional: Home functionality (Assume typical unless deductions are warranted)
+
+       Typ	Typical Functionality
+       Min1	Minor Deductions 1
+       Min2	Minor Deductions 2
+       Mod	Moderate Deductions
+       Maj1	Major Deductions 1
+       Maj2	Major Deductions 2
+       Sev	Severely Damaged
+       Sal	Salvage only
+
+```{r}
+#replace the missing value with the mode
+all[is.na(all$Functional),"Functional"]=getmode(all$Functional)
+
+#convert to ordinal
+values=c("Sal"=0,"Sev"=1,"Maj2"=2,"Maj1"=3,"Mod"=4,"Min2"=5,"Min1"=6,"Typ"=7)
+all$Functional=as.integer(revalue(all$Functional, values))
+class(all$Functional)
+table(all$Functional)
+
+#checking the distribution of the Functional
+table(all$Functional)
+```
+31. Exterior1st: Exterior covering on house
+
+       AsbShng	Asbestos Shingles
+       AsphShn	Asphalt Shingles
+       BrkComm	Brick Common
+       BrkFace	Brick Face
+       CBlock	Cinder Block
+       CemntBd	Cement Board
+       HdBoard	Hard Board
+       ImStucc	Imitation Stucco
+       MetalSd	Metal Siding
+       Other	Other
+       Plywood	Plywood
+       PreCast	PreCast	
+       Stone	Stone
+       Stucco	Stucco
+       VinylSd	Vinyl Siding
+       Wd Sdng	Wood Siding
+       WdShing	Wood Shingles
+
+```{r}
+#replace missing values with the mode
+all[is.na(all$Exterior1st),"Exterior1st"]=getmode(all$Exterior1st)
+
+#convert as factor
+all$Exterior1st= as.factor(all$Exterior1st)
+class(all$Exterior1st)
+```
+32. Exterior2nd: Exterior covering on house (if more than one material)
+
+       AsbShng	Asbestos Shingles
+       AsphShn	Asphalt Shingles
+       BrkComm	Brick Common
+       BrkFace	Brick Face
+       CBlock	Cinder Block
+       CemntBd	Cement Board
+       HdBoard	Hard Board
+       ImStucc	Imitation Stucco
+       MetalSd	Metal Siding
+       Other	Other
+       Plywood	Plywood
+       PreCast	PreCast
+       Stone	Stone
+       Stucco	Stucco
+       VinylSd	Vinyl Siding
+       Wd Sdng	Wood Siding
+       WdShing	Wood Shingles
+
+```{r}
+#replace missing values with the mode
+all[is.na(all$Exterior2nd),"Exterior2nd"]=getmode(all$Exterior2nd)
+
+#convert as factor
+all$Exterior2nd= as.factor(all$Exterior2nd)
+class(all$Exterior2nd)
+```
+33.Electrical: Electrical system
+
+       SBrkr	Standard Circuit Breakers & Romex
+       FuseA	Fuse Box over 60 AMP and all Romex wiring (Average)	
+       FuseF	60 AMP Fuse Box and mostly Romex wiring (Fair)
+       FuseP	60 AMP Fuse Box and mostly knob & tube wiring (poor)
+       Mix	Mixed
+
+```{r}
+#replace missing value with mode and convert variable to factor
+all[is.na(all$Electrical),"Electrical"]=getmode(all$Electrical)
+
+all$Electrical=as.factor(all$Electrical)
+class(all$Electrical)
+table(all$Electrical)
+```
+34. SaleType: Type of sale
+		
+       WD 	Warranty Deed - Conventional
+       CWD	Warranty Deed - Cash
+       VWD	Warranty Deed - VA Loan
+       New	Home just constructed and sold
+       COD	Court Officer Deed/Estate
+       Con	Contract 15% Down payment regular terms
+       ConLw	Contract Low Down payment and low interest
+       ConLI	Contract Low Interest
+       ConLD	Contract Low Down
+       Oth	Other
+
+```{r}
+#replace missing value with mode and convert variable to factor
+all[is.na(all$SaleType),"SaleType"]=getmode(all$SaleType)
+
+all$SaleType=as.factor(all$SaleType)
+class(all$SaleType)
+table(all$SaleType)
+```
+
+                  ################################### Convert the remaining variables to appropriate class #######################################
+
+
+a. Foundation: Type of foundation
+		
+       BrkTil	Brick & Tile
+       CBlock	Cinder Block
+       PConc	Poured Contrete	
+       Slab	Slab
+       Stone	Stone
+       Wood	Wood
+
+
+```{r}
+#converting into factor class
+all$Foundation=as.factor(all$Foundation)
+class(all$Foundation)
+```
+b. Heating: Type of heating
+		
+       Floor	Floor Furnace
+       GasA	Gas forced warm air furnace
+       GasW	Gas hot water or steam heat
+       Grav	Gravity furnace	
+       OthW	Hot water or steam heat other than gas
+       Wall	Wall furnace
+
+```{r}
+#converting into factor class
+all$Heating=as.factor(all$Heating)
+class(all$Heating)
+```
+c. HeatingQC: Heating quality and condition
+
+       Ex	Excellent
+       Gd	Good
+       TA	Average/Typical
+       Fa	Fair
+       Po	Poor
+
+```{r}
+#converting into ordinal
+values=c("Po"=0,"Fa"=1,"TA"=2,"Gd"=3,"Ex"=4)
+all$HeatingQC=as.integer(revalue(all$HeatingQC, values))
+class(all$HeatingQC)
+```
+d. CentralAir: Central air conditioning
+
+       N	No
+       Y	Yes
+
+```{r}
+#convert to ordinal
+values=c("N"=0,"Y"=1)
+all$CentralAir=as.integer(revalue(all$CentralAir, values))
+class(all$CentralAir)
+```
+e. RoofStyle: Type of roof
+
+       Flat	Flat
+       Gable	Gable
+       Gambrel	Gabrel (Barn)
+       Hip	Hip
+       Mansard	Mansard
+       Shed	Shed
+
+```{r}
+#converting into factor class
+all$RoofStyle=as.factor(all$RoofStyle)
+class(all$RoofStyle)
+```
+f.RoofMatl: Roof material
+
+       ClyTile	Clay or Tile
+       CompShg	Standard (Composite) Shingle
+       Membran	Membrane
+       Metal	Metal
+       Roll	Roll
+       Tar&Grv	Gravel & Tar
+       WdShake	Wood Shakes
+       WdShngl	Wood Shingles
+
+```{r}
+#converting into factor class
+all$RoofMatl=as.factor(all$RoofMatl)
+class(all$RoofMatl)
+```
+g. LandContour: Flatness of the property
+
+       Lvl	Near Flat/Level	
+       Bnk	Banked - Quick and significant rise from street grade to building
+       HLS	Hillside - Significant slope from side to side
+       Low	Depression
+
+```{r}
+#converting into factor class
+all$LandContour=as.factor(all$LandContour)
+class(all$LandContour)
+```
+h.LandSlope: Slope of property
+		
+       Gtl	Gentle slope
+       Mod	Moderate Slope	
+       Sev	Severe Slope
+
+```{r}
+#converting to ordinal
+values=c("Sev"=0,"Mod"=1,"Gtl"=2)
+all$LandSlope=as.integer(revalue(all$LandSlope, values))
+class(all$LandSlope)
+```
+i. BldgType: Type of dwelling
+		
+       1Fam	Single-family Detached	
+       2FmCon	Two-family Conversion; originally built as one-family dwelling
+       Duplx	Duplex
+       TwnhsE	Townhouse End Unit
+       TwnhsI	Townhouse Inside Unit
+       
+```{r}
+#convert to factor
+all$BldgType=as.factor(all$BldgType)
+class(all$BldgType)
+```
+j. HouseStyle: Style of dwelling
+	
+       1Story	One story
+       1.5Fin	One and one-half story: 2nd level finished
+       1.5Unf	One and one-half story: 2nd level unfinished
+       2Story	Two story
+       2.5Fin	Two and one-half story: 2nd level finished
+       2.5Unf	Two and one-half story: 2nd level unfinished
+       SFoyer	Split Foyer
+       SLvl	Split Level
+
+```{r}
+#convert to factor
+all$HouseStyle=as.factor(all$HouseStyle)
+class(all$HouseStyle)
+```
+k. Neighborhood: Physical locations within Ames city limits
+
+       Blmngtn	Bloomington Heights
+       Blueste	Bluestem
+       BrDale	Briardale
+       BrkSide	Brookside
+       ClearCr	Clear Creek
+       CollgCr	College Creek
+       Crawfor	Crawford
+       Edwards	Edwards
+       Gilbert	Gilbert
+       IDOTRR	Iowa DOT and Rail Road
+       MeadowV	Meadow Village
+       Mitchel	Mitchell
+       Names	North Ames
+       NoRidge	Northridge
+       NPkVill	Northpark Villa
+       NridgHt	Northridge Heights
+       NWAmes	Northwest Ames
+       OldTown	Old Town
+       SWISU	South & West of Iowa State University
+       Sawyer	Sawyer
+       SawyerW	Sawyer West
+       Somerst	Somerset
+       StoneBr	Stone Brook
+       Timber	Timberland
+       Veenker	Veenker
+
+```{r}
+#convert to factor
+all$Neighborhood=as.factor(all$Neighborhood)
+class(all$Neighborhood)
+```
+l. Condition1: Proximity to various conditions
+	
+       Artery	Adjacent to arterial street
+       Feedr	Adjacent to feeder street	
+       Norm	Normal	
+       RRNn	Within 200' of North-South Railroad
+       RRAn	Adjacent to North-South Railroad
+       PosN	Near positive off-site feature--park, greenbelt, etc.
+       PosA	Adjacent to postive off-site feature
+       RRNe	Within 200' of East-West Railroad
+       RRAe	Adjacent to East-West Railroad
+
+```{r}
+#convert to factor
+all$Condition1=as.factor(all$Condition1)
+class(all$Condition1)
+```
+m. Condition2: Proximity to various conditions (if more than one is present)
+		
+       Artery	Adjacent to arterial street
+       Feedr	Adjacent to feeder street	
+       Norm	Normal	
+       RRNn	Within 200' of North-South Railroad
+       RRAn	Adjacent to North-South Railroad
+       PosN	Near positive off-site feature--park, greenbelt, etc.
+       PosA	Adjacent to postive off-site feature
+       RRNe	Within 200' of East-West Railroad
+       RRAe	Adjacent to East-West Railroad
+
+```{r}
+#convert to factor
+all$Condition2=as.factor(all$Condition2)
+class(all$Condition2)
+```
+n. Street: Type of road access to property
+
+       Grvl	Gravel	
+       Pave	Paved
+       
+```{r}
+#convert to ordinal
+values=c("Grvl"=0,"Pave"=1)
+all$Street=as.integer(revalue(all$Street, values))
+class(all$Street)
+```
+o. PavedDrive: Paved driveway
+
+       Y	Paved 
+       P	Partial Pavement
+       N	Dirt/Gravel
+       
+```{r}
+#convert to ordinal
+values=c("N"=0,"P"=1,"Y"=2)
+all$PavedDrive=as.integer(revalue(all$PavedDrive, values))
+class(all$PavedDrive)
+```
+p. ExterQual: Evaluates the quality of the material on the exterior 
+		
+       Ex	Excellent
+       Gd	Good
+       TA	Average/Typical
+       Fa	Fair
+       Po	Poor
+       
+```{r}
+#convert to ordinal
+values=c("Po"=0,"Fa"=1,"TA"=2,"Gd"=3,"Ex"=4)
+all$ExterQual=as.integer(revalue(all$ExterQual, values))
+class(all$ExterQual)
+#check the distribution of the ordinal variable
+table(all$ExterQual)
+```
+q. ExterCond: Evaluates the present condition of the material on the exterior
+		
+       Ex	Excellent
+       Gd	Good
+       TA	Average/Typical
+       Fa	Fair
+       Po	Poor
+       
+```{r}
+#convert to ordinal
+values=c("Po"=0,"Fa"=1,"TA"=2,"Gd"=3,"Ex"=4)
+all$ExterCond=as.integer(revalue(all$ExterCond, values))
+class(all$ExterCond)
+#check the distribution of the ordinal variable
+table(all$ExterCond)
+```
+r. YrSold: Year Sold (YYYY)
+
+s. MoSold: Month Sold (MM)
+
+```{r}
+#the prices of houses should be cheaper in earlier years.
+#convert YrSold to ordinal
+sprintf("Is data type of YrSold integer: %s", is.integer(YrSold))
+#convert to factor
+sprintf("Is data type of MoSold integer: %s", is.integer(MoSold))
+all$MoSold=as.factor(all$MoSold)
+class(all$MoSold)
+```
+t. MSSubClass: Identifies the type of dwelling involved in the sale.	
+
+        20	1-STORY 1946 & NEWER ALL STYLES
+        30	1-STORY 1945 & OLDER
+        40	1-STORY W/FINISHED ATTIC ALL AGES
+        45	1-1/2 STORY - UNFINISHED ALL AGES
+        50	1-1/2 STORY FINISHED ALL AGES
+        60	2-STORY 1946 & NEWER
+        70	2-STORY 1945 & OLDER
+        75	2-1/2 STORY ALL AGES
+        80	SPLIT OR MULTI-LEVEL
+        85	SPLIT FOYER
+        90	DUPLEX - ALL STYLES AND AGES
+       120	1-STORY PUD (Planned Unit Development) - 1946 & NEWER
+       150	1-1/2 STORY PUD - ALL AGES
+       160	2-STORY PUD - 1946 & NEWER
+       180	PUD - MULTILEVEL - INCL SPLIT LEV/FOYER
+       190	2 FAMILY CONVERSION - ALL STYLES AND AGES
+
+```{r}
+#convert to factor
+all$MSSubClass=as.factor(all$MSSubClass)
+str(all$MSSubClass)
+```
+u. LotShape: General shape of property
+
+       Reg	Regular	
+       IR1	Slightly irregular
+       IR2	Moderately Irregular
+       IR3	Irregular
+
+```{r}
+#convert LotShape as factor
+values=c('IR3'=0, 'IR2'=1, 'IR1'=2, 'Reg'=3)
+all$LotShape=as.integer(revalue(all$LotShape,values))
+class(all$LotShape)
+#check the distribution of the data
+table(all$LotShape)
+```
+v. LotConfig: Lot configuration
+
+       Inside	Inside lot
+       Corner	Corner lot
+       CulDSac	Cul-de-sac
+       FR2	Frontage on 2 sides of property
+       FR3	Frontage on 3 sides of property
+
+```{r}
+#convert LotConfig as factor
+all$LotConfig=as.factor(all$LotConfig)
+class(all$LotConfig)
+```
+
+w.SaleCondition: Condition of sale
+
+       Normal	Normal Sale
+       Abnorml	Abnormal Sale -  trade, foreclosure, short sale
+       AdjLand	Adjoining Land Purchase
+       Alloca	Allocation - two linked properties with separate deeds, typically condo with a garage unit	
+       Family	Sale between family members
+       Partial	Home was not completed when last assessed (associated with New Homes)
+
+```{r}
+#convert as factor
+all$SaleCondition=as.factor(all$SaleCondition)
+class(all$SaleCondition)
+```
+
+
+                    ################################# Check the number of missing data and structure of the data  #####################################
+
+
+```{r}
+#tabulate the number of missing values
+miss_freq=sort(colSums(is.na(all)),decreasing=TRUE)
+print(miss_freq)
+sprintf("There are %s columns of missing values", sum(miss_freq>0))
+
+#check the structure of the data
+str(all)
+```
+
+```{r}
+#save dataframe with its formatting.
+saveRDS(all,file="all_DP.rds")
+```
+

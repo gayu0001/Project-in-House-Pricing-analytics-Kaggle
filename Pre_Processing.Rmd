@@ -1,0 +1,127 @@
+---
+title: "Pre-Processing"
+output: html_notebook
+---
+
+```{r}
+library(knitr)
+library(ggplot2)
+library(plyr)
+library(dplyr)
+library(corrplot)
+library(caret)
+library(gridExtra)
+library(scales)
+library(Rmisc)
+library(ggrepel)
+library(randomForest)
+library(psych)
+library(xgboost)
+```
+
+```{r}
+#read in all.rds(output from feature_engineering.Rmd)
+all=readRDS("all_DP_FE.rds")
+#str(all)
+```
+
+
+####################### Removal high mulitcollinear variables ###################
+
+
+```{r}
+#removing one of the two variables that has high correlation with another variable. The variable to drop is based on its correlation with the SalePrice.
+rm_vars=c("YearRemodAdd","GarageYrBlt","GarageArea","GarageCond","TotalBsmtSF", "TotRmsAbvGrd","BsmtFinSF1")
+all=all[,!(names(all) %in% rm_vars)]
+
+#check dimension
+dim(all)
+```
+
+################## Separate the numeric from the encoded variables #############
+
+```{r}
+
+#setting the name list for numeric variables
+numericVarNames=numericVarNames[!(numericVarNames %in% c('SalePrice','MSSubClass','MoSold','OverallQual','OverallCond','YrSold'))] 
+#include some of the features engineered into the list
+numericVarNames=append(numericVarNames,c('Age','Total_Bathrooms','Total_Living_Area'))
+
+#creating the numeric dataframe
+Numeric_DF=all[,names(all) %in% numericVarNames]
+#creating the factor dataframe
+Factors_DF=all[,!(names(all) %in% numericVarNames)]
+Factors_DF=Factors_DF[,names(Factors_DF)!='SalePrice']
+
+#check the number of variables in each dataframe
+sprintf("There are %s numeric and %s factor variables", dim(Numeric_DF)[2],dim(Factors_DF)[2])
+```
+
+################## Fixing skewed predictator variables #######################
+
+```{r}
+#adjust skewed predictator variables > 0.8
+for(i in 1:(dim(Numeric_DF)[2])){
+    if(abs(skew(Numeric_DF[,i]))>0.8){
+          Numeric_DF[,i]=log(Numeric_DF[,i]+1)
+        }
+}
+```
+
+############################ Normalization #################################
+
+```{r}
+#normalizing of the data
+tmp=preProcess(Numeric_DF,method=c("center", "scale"))
+DF_norm=predict(tmp,Numeric_DF)
+
+#check normalized values
+DF_norm
+```
+
+################ Implementation of one hot encoding ############################
+
+```{r}
+#before one-hot implementation
+Factors_DF
+
+#encodin Factors_DF
+DF_tmp=as.data.frame(model.matrix(~.-1,Factors_DF))
+
+#check the one-hot encoded output
+DF_tmp
+```
+
+################# Skewed response variable #############################
+
+```{r}
+all["SalePrice"]
+
+#before implementation of log function
+hist(all$SalePrice)
+skew(all$SalePrice)
+
+#implementation of log function
+all$SalePrice=log(all$SalePrice) 
+#check the implementation
+hist(all$SalePrice)
+skew(all$SalePrice)
+```
+
+```{r}
+full=cbind(DF_norm, DF_tmp,all["SalePrice"])
+#check full data
+full
+
+train=full[!is.na(all$SalePrice),]
+test=full[is.na(all$SalePrice),]
+dim(train)
+
+#split back to train and test set
+saveRDS(train,file="train.rds")
+saveRDS(test,file="test.rds")
+```
+
+
+
+
